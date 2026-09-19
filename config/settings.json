@@ -1,8 +1,13 @@
 {
   "subreddit": "Ru_Steam",
   "region_cc": "ru",
-  "language_l": "russian",
+  "currency_ccs": ["ru", "kz", "ua", "us"],
   "min_discount_alert": 20,
+  "min_discount_weekly": 20,
+  "min_discount_hot": 70,
   "weekly_digest_limit": 15,
-  "memory_ttl_days": 30
+  "memory_ttl_days": 30,
+  "weekly_day": 1,
+  "flair_id": null,
+  "flair_text": null
 }

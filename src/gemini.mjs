@@ -1,34 +1,78 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { formatPriceLine } from './steam.mjs';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+function buildFallback(deals, type) {
+  const title =
+    type === 'weekly'
+      ? 'Steam: топ скидок недели'
+      : type === 'hot'
+        ? 'Steam: крупные скидки'
+        : 'Steam: скидки из списка отслеживания';
+
+  const lines = deals.map((d) => `- ${formatPriceLine(d)}`);
+  const body = [
+    type === 'weekly' ? 'Подборка заметных скидок в Steam.' : 'Появились скидки на отслеживаемые / популярные игры.',
+    '',
+    ...lines,
+    '',
+    '_Цены ориентировочные, могут измениться. Регионы: RU / KZ / UA / US._'
+  ].join('\n');
+
+  return { title, body };
+}
 
 export async function generateText(deals, type) {
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const listForPrompt = deals.map((d) => ({
+    name: d.name,
+    appid: d.appid,
+    discount: d.discount,
+    url: d.url,
+    prices: d.prices || {},
+    line: formatPriceLine(d)
+  }));
 
-  const prompt = `
-    Ты редактор новостей Steam.
-    Данные о скидках: ${JSON.stringify(deals)}
-    
-    Тип поста: ${type === 'weekly' ? 'Еженедельный дайджест' : 'Алерт по списку желаний'}
-    
-    Правила:
-    1. Верни строго JSON: { "title": "...", "body": "..." }
-    2. Title: Короткий, информативный. Например: "Steam Sale: Топ скидок недели" или "Скидки на игры из вашего списка".
-    3. Body: Сухо, по делу. Никаких эмодзи, никаких восклицательных знаков, никакой рекламы.
-    4. Формат каждой строки в теле поста: "[Название](ссылка) за [Цена] (-[Процент]%)"
-    5. Если тип 'weekly', добавь в конце дату окончания акции (если известна) или фразу "Цены могут измениться".
-    6. Не придумывай описания игр. Только факты.
-  `;
+  // Без ключа — сразу шаблон
+  if (!process.env.GEMINI_API_KEY) {
+    return buildFallback(deals, type);
+  }
 
   try {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    const prompt = `
+Ты редактор коротких постов про скидки Steam для русскоязычного Reddit.
+Данные (уже готовые строки с ценами — используй их как есть, не выдумывай цены):
+${JSON.stringify(listForPrompt, null, 2)}
+
+Тип: ${type} (weekly | alert | hot)
+
+Верни СТРОГО JSON без markdown-обёртки:
+{"title":"...","body":"..."}
+
+Правила:
+1. title — до 120 символов, по делу, без кликбейта и без капса.
+2. body — markdown Reddit: список игр. Каждая игра = готовое поле "line" из данных.
+3. Без эмодзи, без восклицательных знаков, без рекламы сторонних магазинов.
+4. В конце одна строка: цены ориентировочные, регионы RU/KZ/UA/US.
+5. Не придумывай названия, цены и ссылки.
+`;
+
     const result = await model.generateContent(prompt);
     const text = result.response.text();
     const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim();
-    return JSON.parse(cleanJson);
+    const parsed = JSON.parse(cleanJson);
+
+    if (!parsed?.title || !parsed?.body) throw new Error('bad json shape');
+
+    // Страховка: если ИИ выкинул список — подставляем свой
+    if (!parsed.body.includes('store.steampowered.com')) {
+      const fb = buildFallback(deals, type);
+      return { title: parsed.title || fb.title, body: fb.body };
+    }
+    return parsed;
   } catch (err) {
-    console.error("Gemini error", err);
-    // Fallback
-    const list = deals.map(d => `- ${d.name}: ${d.final_price} (-${d.discount}%)`).join('\n');
-    return { title: "Steam Deals", body: list };
+    console.error('Gemini error, using fallback:', err.message);
+    return buildFallback(deals, type);
   }
 }

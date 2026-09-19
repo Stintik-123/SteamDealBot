@@ -5,64 +5,74 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- MEMES LOGIC ---
-export function getRandomMeme() {
-  const memesDir = path.join(__dirname, '../assets/memes');
-  
-  // Если папки нет или она пустая - возвращаем null (бот постит без картинки или падает, решим позже)
-  if (!fs.existsSync(memesDir)) return null;
+const ROOT = path.join(__dirname, '..');
+const MEMORY_PATH = path.join(ROOT, 'data', 'memory.json');
+const MEMES_DIR = path.join(ROOT, 'assets', 'memes');
 
-  const files = fs.readdirSync(memesDir).filter(f => /\.(jpg|jpeg|png)$/i.test(f));
-  if (files.length === 0) return null;
-
-  const randomFile = files[Math.floor(Math.random() * files.length)];
-  const fullPath = path.join(memesDir, randomFile);
-  
-  // Возвращаем абсолютный путь к файлу для чтения буфера
-  return fullPath;
+export function ensureDataDir() {
+  const dir = path.dirname(MEMORY_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-// --- MEMORY LOGIC ---
-const MEMORY_PATH = path.join(__dirname, '../data/memory.json');
+export function getRandomMeme() {
+  if (!fs.existsSync(MEMES_DIR)) return null;
+  const files = fs.readdirSync(MEMES_DIR).filter((f) => /\.(jpg|jpeg|png|gif|webp)$/i.test(f));
+  if (files.length === 0) return null;
+  const randomFile = files[Math.floor(Math.random() * files.length)];
+  return path.join(MEMES_DIR, randomFile);
+}
 
 export function loadMemory() {
+  ensureDataDir();
   try {
     if (!fs.existsSync(MEMORY_PATH)) return [];
-    return JSON.parse(fs.readFileSync(MEMORY_PATH, 'utf8'));
+    const raw = fs.readFileSync(MEMORY_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data : [];
   } catch (e) {
-    console.error('Memory load error', e);
+    console.error('Memory load error', e.message);
     return [];
   }
 }
 
 export function saveMemory(memoryArray) {
+  ensureDataDir();
   fs.writeFileSync(MEMORY_PATH, JSON.stringify(memoryArray, null, 2));
 }
 
 export function isGameBlocked(memory, appId, currentDiscount, ttlDays) {
-  const entry = memory.find(m => m.appid === appId);
+  const entry = memory.find((m) => Number(m.appid) === Number(appId));
   if (!entry) return false;
 
-  // Проверяем срок давности записи
-  const daysSincePost = (Date.now() - new Date(entry.last_posted_at).getTime()) / (1000 * 60 * 60 * 24);
-  if (daysSincePost > ttlDays) return false; // Старая запись, можно постить снова
+  const daysSincePost =
+    (Date.now() - new Date(entry.last_posted_at).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSincePost > ttlDays) return false;
 
-  // Проверяем, изменилась ли скидка существенно (>10%)
-  if (Math.abs(currentDiscount - entry.discount_percent) < 10) {
-    return true; // Скидка та же или почти та же, блокируем
+  // Та же скидка ±10% — не постить снова
+  if (Math.abs(Number(currentDiscount) - Number(entry.discount_percent)) < 10) {
+    return true;
   }
-
-  return false; // Скидка сильно выросла, разрешаем пост
+  return false;
 }
 
 export function addToMemory(memory, deal) {
-  memory.push({
-    appid: deal.appid,
+  const next = memory.filter((m) => Number(m.appid) !== Number(deal.appid));
+  next.push({
+    appid: Number(deal.appid),
     name: deal.name,
-    discount_percent: deal.discount,
+    discount_percent: Number(deal.discount),
     last_posted_at: new Date().toISOString()
   });
-  // Удаляем старые записи старше TTL, чтобы файл не рос бесконечно
-  const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000); // Жестко 30 дней очистки
-  return memory.filter(m => new Date(m.last_posted_at).getTime() > cutoff);
+
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  return next.filter((m) => new Date(m.last_posted_at).getTime() > cutoff);
+}
+
+export function loadJson(relativePath, fallback) {
+  const full = path.join(ROOT, relativePath);
+  try {
+    return JSON.parse(fs.readFileSync(full, 'utf8'));
+  } catch {
+    return fallback;
+  }
 }
