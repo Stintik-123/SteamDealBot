@@ -1,0 +1,8 @@
+{
+  "subreddit": "Ru_Steam",
+  "region_cc": "ru",
+  "language_l": "russian",
+  "min_discount_alert": 20,
+  "weekly_digest_limit": 15,
+  "memory_ttl_days": 30
+}
